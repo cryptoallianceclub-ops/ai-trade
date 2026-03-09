@@ -5,7 +5,7 @@ IFS=$'\n\t'
 INSTALL_DIR="${INSTALL_DIR:-/opt/crypto-alliance-ai-trade}"
 IMAGE_REPO="${IMAGE_REPO:-ghcr.io/cryptoallianceclub-ops/crypto-alliance-ai-trade}"
 PROJECT_NAME="crypto-alliance"
-COMPOSE_FILE="${INSTALL_DIR}/docker-compose.prod.yml"
+COMPOSE_FILE="${INSTALL_DIR}/data/runtime/docker-compose.prod.yml"
 DATA_DIR="${INSTALL_DIR}/data"
 LOGS_DIR="${INSTALL_DIR}/logs"
 RELEASE_STATE_FILE="${DATA_DIR}/release-state.json"
@@ -196,6 +196,7 @@ persist_self_script() {
 }
 
 write_compose_file() {
+  mkdir -p "$(dirname "$COMPOSE_FILE")"
   cat > "$COMPOSE_FILE" <<EOF
 name: ${PROJECT_NAME}
 
