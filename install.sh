@@ -332,8 +332,8 @@ backup_databases() {
 
 wait_service_healthy() {
   local service="$1"
-  local max_retries=120
-  local interval=3
+  local max_retries=10
+  local interval=10
 
   local container_id
   container_id="$(compose_cmd ps -q "$service")"
