@@ -223,7 +223,7 @@ services:
   node-client:
     image: ${IMAGE_REPO}:\${APP_VERSION:-latest}
     restart: unless-stopped
-    command: ["node", "node-client/dist/node-client/src/main.js"]
+    command: ["node", "--experimental-specifier-resolution=node", "node-client/dist/node-client/src/main.js"]
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
