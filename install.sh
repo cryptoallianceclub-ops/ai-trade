@@ -332,7 +332,7 @@ backup_databases() {
 
 wait_service_healthy() {
   local service="$1"
-  local max_retries=60
+  local max_retries=120
   local interval=3
 
   local container_id
@@ -355,7 +355,26 @@ wait_service_healthy() {
   done
 
   err "服务未就绪: $service"
+  dump_service_diagnostics "$service" "$container_id"
   return 1
+}
+
+dump_service_diagnostics() {
+  local service="$1"
+  local container_id="$2"
+
+  if [[ -z "$container_id" ]]; then
+    return
+  fi
+
+  local state_info
+  state_info="$(docker inspect -f '{{.Name}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} restarts={{.RestartCount}} exitCode={{.State.ExitCode}} error={{.State.Error}}' "$container_id" 2>/dev/null || true)"
+  if [[ -n "$state_info" ]]; then
+    err "容器状态($service): $state_info"
+  fi
+
+  err "容器最近日志($service, tail=120)："
+  docker logs --tail 120 "$container_id" 2>&1 || true
 }
 
 ensure_target_version() {
