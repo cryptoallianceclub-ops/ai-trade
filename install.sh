@@ -166,22 +166,42 @@ ensure_runtime_layout() {
   mkdir -p "${INSTALL_DIR}" "${DATA_DIR}" "${LOGS_DIR}"
 }
 
-detect_local_ip() {
+is_valid_ipv4() {
+  local ip="$1"
+  local IFS='.'
+  local -a octets=()
+  local octet=""
+
+  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  read -r -a octets <<< "$ip"
+  [[ "${#octets[@]}" -eq 4 ]] || return 1
+
+  for octet in "${octets[@]}"; do
+    [[ "$octet" =~ ^[0-9]+$ ]] || return 1
+    ((10#$octet <= 255)) || return 1
+  done
+
+  return 0
+}
+
+detect_public_ip() {
   local ip_candidate=""
+  local service=""
+  local -a services=(
+    "https://api.ipify.org"
+    "https://ifconfig.me/ip"
+    "https://icanhazip.com"
+  )
 
-  if command -v hostname >/dev/null 2>&1; then
-    ip_candidate="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-  fi
+  for service in "${services[@]}"; do
+    ip_candidate="$(curl -4fsS --max-time 3 "$service" 2>/dev/null | tr -d '\r\n' || true)"
+    if is_valid_ipv4 "$ip_candidate"; then
+      echo "$ip_candidate"
+      return 0
+    fi
+  done
 
-  if [[ -z "$ip_candidate" ]] && command -v ip >/dev/null 2>&1; then
-    ip_candidate="$(ip route get 1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}' || true)"
-  fi
-
-  if [[ -z "$ip_candidate" ]]; then
-    ip_candidate="127.0.0.1"
-  fi
-
-  echo "$ip_candidate"
+  return 1
 }
 
 persist_self_script() {
@@ -474,7 +494,12 @@ main() {
   printf "${GREEN}==============================================${NC}\n"
   printf "${GREEN}✅ 操作完成：%s${NC}\n" "$ACTION"
   printf "${GREEN}安装目录：%s${NC}\n" "$INSTALL_DIR"
-  printf "${GREEN}Web访问地址：http://%s:3000${NC}\n" "$(detect_local_ip)"
+  local web_public_ip=""
+  if web_public_ip="$(detect_public_ip)"; then
+    printf "${GREEN}Web访问地址：http://%s:3000${NC}\n" "$web_public_ip"
+  else
+    printf "${GREEN}Web访问地址：未获取到公网IP，请手动查询${NC}\n"
+  fi
   printf "${GREEN}==============================================${NC}\n"
 }
 
