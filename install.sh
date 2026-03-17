@@ -229,11 +229,6 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
-    depends_on:
-      node-client:
-        condition: service_started
-      updater:
-        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/login"]
       interval: 30s
@@ -247,6 +242,9 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+    depends_on:
+      web:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3100/health"]
       interval: 30s
@@ -263,6 +261,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./:/workspace
       - ./data:/app/data
+    depends_on:
+      web:
+        condition: service_healthy
+      node-client:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3201/health"]
       interval: 30s
@@ -365,8 +368,15 @@ wait_service_healthy() {
   for ((i=1; i<=max_retries; i++)); do
     local status
     status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+    local has_healthcheck
+    has_healthcheck="$(docker inspect -f '{{if .State.Health}}1{{else}}0{{end}}' "$container_id" 2>/dev/null || echo 0)"
 
-    if [[ "$status" == "healthy" || "$status" == "running" ]]; then
+    if [[ "$has_healthcheck" == "1" && "$status" == "healthy" ]]; then
+      log "服务健康: $service ($status)"
+      return 0
+    fi
+
+    if [[ "$has_healthcheck" == "0" && "$status" == "running" ]]; then
       log "服务健康: $service ($status)"
       return 0
     fi
@@ -409,18 +419,22 @@ ensure_target_version() {
 perform_deploy() {
   if [[ "$NO_PULL" -eq 0 ]]; then
     log "拉取镜像..."
-    compose_cmd pull updater web node-client
+    compose_cmd pull web node-client updater
   else
     log "跳过 pull（--no-pull）"
   fi
 
-  log "启动/更新服务..."
-  compose_cmd up -d --remove-orphans updater web node-client
-
-  log "等待服务健康检查..."
-  wait_service_healthy updater
-  wait_service_healthy node-client
+  log "启动/更新 Web 服务..."
+  compose_cmd up -d web
   wait_service_healthy web
+
+  log "启动/更新 Node 服务..."
+  compose_cmd up -d node-client
+  wait_service_healthy node-client
+
+  log "启动/确认 Updater 服务..."
+  compose_cmd up -d --remove-orphans updater
+  wait_service_healthy updater
 
   log "部署完成"
 }
