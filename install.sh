@@ -2,18 +2,18 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-INSTALL_DIR="${INSTALL_DIR:-/opt/crypto-alliance-ai-trade}"
-IMAGE_REPO="${IMAGE_REPO:-ghcr.io/cryptoallianceclub-ops/crypto-alliance-ai-trade}"
-PROJECT_NAME="crypto-alliance"
-COMPOSE_FILE="${INSTALL_DIR}/data/runtime/docker-compose.prod.yml"
-DATA_DIR="${INSTALL_DIR}/data"
-LOGS_DIR="${INSTALL_DIR}/logs"
-RELEASE_STATE_FILE="${DATA_DIR}/release-state.json"
+BASE_IMAGE_REPO="ghcr.io/cryptoallianceclub-ops/crypto-alliance-ai-trade"
+SYSTEM_PROFILE="${SYSTEM_PROFILE:-ally}"
+INSTALL_DIR="${INSTALL_DIR:-}"
+IMAGE_REPO="${IMAGE_REPO:-}"
+PROJECT_NAME="${PROJECT_NAME:-}"
+COMPOSE_FILE=""
+DATA_DIR=""
+LOGS_DIR=""
+RELEASE_STATE_FILE=""
 
-ACTION="${1:-install}"
-if [[ $# -gt 0 ]]; then
-  shift
-fi
+ACTION="install"
+REMAINING_ARGS=()
 
 TARGET_VERSION=""
 NO_PULL=0
@@ -38,6 +38,10 @@ err() {
   printf "${RED}[%s] %s${NC}\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2
 }
 
+lowercase() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     err "缺少命令: $1"
@@ -48,16 +52,99 @@ need_cmd() {
 print_help() {
   cat <<'USAGE'
 用法:
+  ./install.sh [ally|mushao] [install] [--version vX.Y.Z|latest] [--no-pull]
+  ./install.sh [ally|mushao] update  [--version vX.Y.Z|latest] [--no-pull] [--skip-backup]
+  ./install.sh [ally|mushao] status
+  ./install.sh [ally|mushao] logs [service]
+
+兼容旧写法:
   ./install.sh install [--version vX.Y.Z|latest] [--no-pull]
   ./install.sh update  [--version vX.Y.Z|latest] [--no-pull] [--skip-backup]
   ./install.sh status
   ./install.sh logs [service]
 
 参数:
+  ally                  选择当前系统（默认）
+  mushao                选择 mushao 系统
   --version <ver>       指定目标版本（例如 v1.2.3 或 latest）
   --no-pull             跳过 docker compose pull
   --skip-backup         跳过数据库备份（默认会备份 data/*.db*）
 USAGE
+}
+
+is_system_profile() {
+  case "$1" in
+    ally|mushao)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+select_system_and_action() {
+  local -a args=("$@")
+  local index=0
+
+  if [[ "${#args[@]}" -gt 0 ]] && is_system_profile "${args[0]}"; then
+    SYSTEM_PROFILE="${args[0]}"
+    index=1
+  fi
+
+  if [[ "$index" -lt "${#args[@]}" ]]; then
+    local first="${args[$index]}"
+    case "$first" in
+      install|update|status|logs|help|--help|-h)
+        ACTION="$first"
+        index=$((index + 1))
+        ;;
+      --*)
+        ACTION="install"
+        ;;
+      *)
+        ACTION="$first"
+        index=$((index + 1))
+        ;;
+    esac
+  else
+    ACTION="install"
+  fi
+
+  REMAINING_ARGS=()
+  local i
+  for ((i=index; i<${#args[@]}; i++)); do
+    REMAINING_ARGS+=("${args[$i]}")
+  done
+}
+
+configure_system_defaults() {
+  local default_install_dir="/opt/crypto-alliance-ai-trade"
+  local default_image_repo="$BASE_IMAGE_REPO"
+  local default_project_name="crypto-alliance"
+
+  case "$SYSTEM_PROFILE" in
+    ally)
+      ;;
+    mushao)
+      default_install_dir="/opt/crypto-alliance-ai-trade-mushao"
+      default_image_repo="${BASE_IMAGE_REPO}-mushao"
+      default_project_name="crypto-alliance-mushao"
+      ;;
+    *)
+      err "未知系统: $SYSTEM_PROFILE"
+      print_help
+      exit 1
+      ;;
+  esac
+
+  INSTALL_DIR="${INSTALL_DIR:-$default_install_dir}"
+  IMAGE_REPO="${IMAGE_REPO:-$default_image_repo}"
+  PROJECT_NAME="${PROJECT_NAME:-$default_project_name}"
+  COMPOSE_FILE="${INSTALL_DIR}/data/runtime/docker-compose.prod.yml"
+  DATA_DIR="${INSTALL_DIR}/data"
+  LOGS_DIR="${INSTALL_DIR}/logs"
+  RELEASE_STATE_FILE="${DATA_DIR}/release-state.json"
 }
 
 install_docker_if_needed() {
@@ -117,7 +204,7 @@ normalize_version() {
     echo ""
     return
   fi
-  if [[ "${v,,}" == "latest" ]]; then
+  if [[ "$(lowercase "$v")" == "latest" ]]; then
     echo "latest"
     return
   fi
@@ -312,7 +399,7 @@ compose_cmd() {
     app_version="$(json_get "$RELEASE_STATE_FILE" '.appVersion')"
   fi
 
-  if [[ "${app_version,,}" == "latest" ]]; then
+  if [[ "$(lowercase "$app_version")" == "latest" ]]; then
     app_version=""
   fi
 
@@ -457,7 +544,11 @@ show_logs() {
 }
 
 main() {
+  select_system_and_action "$@"
+  configure_system_defaults
+
   printf "${GREEN}=== Crypto Alliance AI Trade 一键安装脚本 ===${NC}\n"
+  printf "${GREEN}System     : %s${NC}\n" "$SYSTEM_PROFILE"
   printf "${GREEN}Install Dir: %s${NC}\n" "$INSTALL_DIR"
   printf "${GREEN}Image Repo : %s${NC}\n" "$IMAGE_REPO"
 
@@ -466,7 +557,17 @@ main() {
     exit 0
   fi
 
-  parse_args "$@"
+  parse_args "${REMAINING_ARGS[@]}"
+
+  case "$ACTION" in
+    install|update|status|logs)
+      ;;
+    *)
+      err "未知动作: $ACTION"
+      print_help
+      exit 1
+      ;;
+  esac
 
   need_cmd curl
   install_docker_if_needed
@@ -484,7 +585,7 @@ main() {
       ensure_target_version
       log "目标版本: $TARGET_VERSION"
       COMPOSE_APP_VERSION_OVERRIDE=""
-      if [[ "${TARGET_VERSION,,}" != "latest" ]]; then
+      if [[ "$(lowercase "$TARGET_VERSION")" != "latest" ]]; then
         COMPOSE_APP_VERSION_OVERRIDE="$TARGET_VERSION"
       fi
       json_set_release_version "$TARGET_VERSION"
